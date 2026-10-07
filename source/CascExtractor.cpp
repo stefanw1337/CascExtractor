@@ -728,8 +728,13 @@ static bool Matches(const Matcher &m, uint32_t f) {
     return false;
 }
 
+static bool NeedOpen() {
+    if (g_busy) { Log("Busy, wait for the current step to finish."); return true; }
+    if (g_files.empty()) { Log("Press Open first, the tree and filters work once the install is loaded."); return true; }
+    return false;
+}
 static void CheckMatching(bool value) {
-    if (g_files.empty() || g_busy) return;
+    if (NeedOpen()) return;
     Matcher m;
     std::string err;
     if (!BuildMatcher(GetText(ID_FILTER), m, err)) { Log(err); return; }
@@ -745,7 +750,7 @@ static void CheckMatching(bool value) {
 }
 
 static void CheckFromList() {
-    if (g_files.empty() || g_busy) return;
+    if (NeedOpen()) return;
     std::string p = PickFile("Text files (*.txt;*.csv)\0*.txt;*.csv\0All files\0*.*\0", "");
     if (p.empty()) return;
     std::unordered_set<std::string> paths;
@@ -802,6 +807,7 @@ static void StartOpen() {
         return;
     }
     SaveSettings();
+    Log("Opening " + install + " ... this takes a minute (reading about 2 million file entries).");
     TreeView_DeleteAllItems(g_tree);
     g_files.clear();
     g_dirs.clear();
@@ -1081,7 +1087,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         UpdateButtons();
         if (msg == WM_APP_DLDONE) {
             SetWindowTextA(g_status, wp ? "Listfile downloaded." : "Listfile download failed.");
-            if (wp && g_openAfterDownload) StartOpen();
+            if (wp && (g_openAfterDownload || g_files.empty())) StartOpen();
             g_openAfterDownload = false;
         }
         return 0;
