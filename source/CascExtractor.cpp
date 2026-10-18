@@ -242,6 +242,8 @@ static HTREEITEM InsertItem(HTREEITEM parent, LPARAM param, int img, bool childr
     return (HTREEITEM)SendMessageA(g_tree, TVM_INSERTITEMA, 0, (LPARAM)&ins);
 }
 
+static const size_t kMaxShownFiles = 20000;
+
 static void PopulateDir(int d) {
     DirRec &r = g_dirs[d];
     if (r.populated) return;
@@ -250,8 +252,12 @@ static void PopulateDir(int d) {
     SendMessageA(g_tree, WM_SETREDRAW, FALSE, 0);
     for (int s : r.subdirs)
         g_dirs[s].item = InsertItem(parent, DirParam(s), StateOfDir(s), true);
-    for (uint32_t f : r.files) InsertItem(parent, FileParam(f), g_checked[f] ? 2 : 1, false);
+    size_t shown = std::min(r.files.size(), kMaxShownFiles);
+    for (size_t i = 0; i < shown; ++i) InsertItem(parent, FileParam(r.files[i]), g_checked[r.files[i]] ? 2 : 1, false);
     SendMessageA(g_tree, WM_SETREDRAW, TRUE, 0);
+    if (shown < r.files.size())
+        Log("This folder holds " + Num(r.files.size()) + " files; the tree shows the first " + Num(shown) +
+            ". Use the Filter box to find and tick the others (ticking the folder still includes them all).");
 }
 
 // refresh check images of an item and all its populated descendants

@@ -1,0 +1,25 @@
+diff --git a/src/CascRootFile_WoW.cpp b/src/CascRootFile_WoW.cpp
+index 855bdaa..24692da 100644
+--- a/src/CascRootFile_WoW.cpp
++++ b/src/CascRootFile_WoW.cpp
+@@ -608,8 +608,9 @@ struct TRootHandler_WoW : public TFileTreeRoot
+                 // Keep going through the listfile
+                 for(;;)
+                 {
+-                    // Retrieve the next line from the list file. Ignore lines that are too long to fit in the buffer
+-                    nLength = ListFile_GetNextLine(pSearch->pCache, szFileName, _countof(szFileName));
++                    // Retrieve the next line from the list file. Ignore lines that are too long to fit in the buffer.
++                    // CSV listfiles ("FileDataId;name") are accepted too: the ID is stripped before hashing.
++                    nLength = ListFile_GetNext(pSearch->pCache, szFileName, _countof(szFileName), &FileDataId);
+                     if(nLength == 0)
+                     {
+                         if(GetCascError() == ERROR_INSUFFICIENT_BUFFER)
+@@ -623,6 +624,8 @@ struct TRootHandler_WoW : public TFileTreeRoot
+                     // Calculate the hash of the file name and lookup in tree
+                     FileNameHash = CalcFileNameHash(szFileName);
+                     pFileNode = FileTree.Find(FileNameHash);
++                    if(pFileNode == NULL && FileDataId != CASC_INVALID_ID)
++                        pFileNode = FileTree.FindById(FileDataId);
+                     if(pFileNode != NULL && pFileNode->NameLength == 0)
+                     {
+                         FileTree.SetNodeFileName(pFileNode, szFileName);
