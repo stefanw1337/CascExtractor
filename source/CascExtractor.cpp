@@ -73,6 +73,7 @@ static HANDLE g_storage = nullptr;
 
 static HWND g_wnd, g_tree, g_log, g_status, g_progress;
 static bool g_openAfterDownload = false;
+static bool g_online = false;
 static bool g_demo = false;  // --demo: build the tree from the listfile only (UI testing)
 static HFONT g_font;
 static int g_dpi = 96;
@@ -383,6 +384,29 @@ static uint32_t SumTotals(int d) {
 }
 
 static std::vector<std::string> ReadLines(const std::string &p);
+
+struct OnlineSource {
+    std::string product = "wow", region = "eu", cache;
+};
+
+// "online", "online:<product>" or "online:<product>:<region>" reads from Blizzard's CDN instead of an install.
+static bool ParseOnline(const std::string &install, OnlineSource &out) {
+    std::string s = Lower(Trim(install));
+    if (s.compare(0, 6, "online") != 0 || (s.size() > 6 && s[6] != ':')) return false;
+    std::vector<std::string> parts;
+    size_t at = 7;
+    while (at <= s.size() && s.size() > 6) {
+        size_t next = s.find(':', at);
+        parts.push_back(Trim(s.substr(at, next == std::string::npos ? std::string::npos : next - at)));
+        if (next == std::string::npos) break;
+        at = next + 1;
+    }
+    if (parts.size() > 0 && !parts[0].empty()) out.product = parts[0];
+    if (parts.size() > 1 && !parts[1].empty()) out.region = parts[1];
+    out.cache = g_exeDir + "\\OnlineCache\\" + out.product + "-" + out.region;
+    return true;
+}
+
 static void OpenWorker(std::string install, std::string listfile) {
     bool ok = false;
     if (g_demo) {
@@ -403,15 +427,41 @@ static void OpenWorker(std::string install, std::string listfile) {
     do {
         if (g_demo) break;
         if (g_storage) { CascCloseStorage(g_storage); g_storage = nullptr; }
-        Status("Opening the CASC storage in " + install + " ...");
-        if (!CascOpenStorage(install.c_str(), 0, &g_storage)) {
-            DWORD e = GetCascError();
-            Log("Could not open the storage (" + (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND
-                                                     ? std::string("no .build.info found there")
-                                                     : ErrText(e)) +
-                "). Point 'WoW install' at the folder that contains .build.info.");
-            g_storage = nullptr;
-            break;
+        OnlineSource online;
+        g_online = ParseOnline(install, online);
+        if (g_online) {
+            CreateDirectoryA(online.cache.substr(0, online.cache.rfind('\\')).c_str(), nullptr);
+            CreateDirectoryA(online.cache.c_str(), nullptr);
+            Status("Connecting to Blizzard's CDN (" + online.product + ", " + online.region + ") ...");
+            Log("Online: product " + online.product + ", region " + online.region + ", cache " + online.cache);
+            CASC_OPEN_STORAGE_ARGS args = {};
+            args.Size = sizeof(args);
+            args.szLocalPath = online.cache.c_str();
+            args.szCodeName = online.product.c_str();
+            args.szRegion = online.region.c_str();
+            args.dwLocaleMask = CASC_LOCALE_ENUS;
+            if (!CascOpenStorageEx(nullptr, &args, true, &g_storage)) {
+                Log("Could not open the online storage: " + ErrText(GetCascError()) +
+                    ". Check the internet connection and the product name (wow, wow_classic, wow_classic_era).");
+                g_storage = nullptr;
+                break;
+            }
+        } else {
+            Status("Opening the CASC storage in " + install + " ...");
+            if (!CascOpenStorage(install.c_str(), 0, &g_storage)) {
+                DWORD e = GetCascError();
+                Log("Could not open the storage (" + (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND
+                                                         ? std::string("no .build.info found there")
+                                                         : ErrText(e)) +
+                    "). Point 'WoW install' at the folder that contains .build.info, or type online:wow:eu.");
+                g_storage = nullptr;
+                break;
+            }
+        }
+        std::string keys = g_exeDir + "\\keys.txt";
+        if (FileExists(keys)) {
+            if (CascImportKeysFromFile(g_storage, keys.c_str())) Log("Imported encryption keys from " + keys);
+            else Log("Could not read the encryption keys in " + keys + ": " + ErrText(GetCascError()));
         }
         Status("Reading the file list ...");
         std::vector<char> pool;
@@ -484,8 +534,8 @@ static void OpenWorker(std::string install, std::string listfile) {
         size_t missing = 0, unnamed = 0;
         for (auto &f : g_files) missing += !f.avail;
         for (auto &f : g_files) unnamed += strncmp(&g_pool[f.name], "_unnamed/", 9) == 0;
-        Log("Opened: " + Num(g_files.size()) + " files (" + Num(unnamed) + " without a name in the listfile, " +
-            Num(missing) + " not on disk).");
+        Log("Opened: " + Num(g_files.size()) + " files (" + Num(unnamed) + " without a name in the listfile" +
+            (g_online ? std::string(", downloaded on demand).") : ", " + Num(missing) + " not on disk)."));
     }
     PostMessageA(g_wnd, WM_APP_OPENED, ok, 0);
 }
@@ -930,7 +980,7 @@ static void CreateUi() {
                  TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS | WS_TABSTOP | WS_VSCROLL,
                  WS_EX_CLIENTEDGE);
     TreeView_SetImageList(g_tree, MakeCheckImages(), TVSIL_STATE);
-    g_status = Ctl("STATIC", "Choose the WoW install folder and press Open.", ID_STATUS, SS_LEFTNOWORDWRAP);
+    g_status = Ctl("STATIC", "Choose the WoW install folder (or type online:wow:eu) and press Open.", ID_STATUS, SS_LEFTNOWORDWRAP);
     g_progress = Ctl(PROGRESS_CLASSA, "", ID_PROGRESS, 0);
     Ctl("BUTTON", "Extract checked", ID_EXTRACT, B);
     Ctl("BUTTON", "Resume last job", ID_RESUME, B);
@@ -1030,7 +1080,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                     uint32_t f = (uint32_t)(p >> 1);
                     t = std::string(PlainOf(f)) + "    " + Bytes(g_files[f].size);
                     if (g_files[f].fdid != CASC_INVALID_ID) t += "   [" + std::to_string(g_files[f].fdid) + "]";
-                    if (!g_files[f].avail) t += "   (not on disk)";
+                    if (!g_files[f].avail && !g_online) t += "   (not on disk)";
                 } else {
                     int d = (int)(p >> 1);
                     t = g_dirs[d].name + "    (" + Num(g_dirs[d].total) + ")";
