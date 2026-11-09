@@ -385,6 +385,46 @@ static uint32_t SumTotals(int d) {
 
 static std::vector<std::string> ReadLines(const std::string &p);
 
+static std::unordered_map<uint32_t, std::string> g_listNames;
+static bool g_listLoaded = false;
+
+// CascLib only matches CSV listfiles by file ID for roots since 8.2; older roots (6.0 - 8.1) get their names here.
+static bool NameById(const std::string &listfile, uint32_t id, std::string &name) {
+    if (!g_listLoaded) {
+        g_listLoaded = true;
+        Status("Reading names from the listfile ...");
+        FILE *f = listfile.empty() ? nullptr : fopen(listfile.c_str(), "rb");
+        if (f) {
+            std::string text;
+            char chunk[1 << 16];
+            size_t got;
+            while ((got = fread(chunk, 1, sizeof chunk, f)) > 0) text.append(chunk, got);
+            fclose(f);
+            g_listNames.reserve(2000000);
+            size_t at = 0;
+            while (at < text.size()) {
+                size_t end = text.find('\n', at);
+                if (end == std::string::npos) end = text.size();
+                size_t semi = text.find(';', at);
+                if (semi != std::string::npos && semi < end) {
+                    uint32_t fileId = (uint32_t)strtoul(text.c_str() + at, nullptr, 10);
+                    size_t stop = end;
+                    while (stop > semi + 1 && (text[stop - 1] == '\r' || text[stop - 1] == ' ')) --stop;
+                    std::string path = Lower(text.substr(semi + 1, stop - semi - 1));
+                    for (auto &c : path) if (c == '\\') c = '/';
+                    if (fileId && !path.empty()) g_listNames[fileId] = std::move(path);
+                }
+                at = end + 1;
+            }
+        }
+        Status("Reading the file list ...");
+    }
+    auto it = g_listNames.find(id);
+    if (it == g_listNames.end()) return false;
+    name = it->second;
+    return true;
+}
+
 struct OnlineSource {
     std::string product = "wow", region = "eu", cache;
 };
@@ -474,7 +514,7 @@ static void OpenWorker(std::string install, std::string listfile) {
             Log("Could not list the files: " + ErrText(GetCascError()));
             break;
         }
-        uint64_t n = 0;
+        uint64_t n = 0, namedById = 0;
         do {
             if (++n % 50000 == 0) Status("Reading the file list ... " + Num(n));
             if (fd.dwFileDataId != CASC_INVALID_ID) {
@@ -488,6 +528,8 @@ static void OpenWorker(std::string install, std::string listfile) {
             if (fd.NameType == CascNameFull) {
                 name = Lower(fd.szFileName);
                 for (auto &c : name) if (c == '\\') c = '/';
+            } else if (fd.dwFileDataId != CASC_INVALID_ID && NameById(listfile, fd.dwFileDataId, name)) {
+                ++namedById;
             } else if (fd.dwFileDataId != CASC_INVALID_ID) {
                 char b[64];
                 snprintf(b, sizeof b, "_unnamed/%lu.dat", (unsigned long)fd.dwFileDataId);
@@ -507,6 +549,10 @@ static void OpenWorker(std::string install, std::string listfile) {
             files.push_back(r);
         } while (CascFindNextFile(hf, &fd));
         CascFindClose(hf);
+        if (namedById) Log("Named " + Num(namedById) + " files by their file ID from the listfile.");
+        g_listNames.clear();
+        g_listNames.rehash(0);
+        g_listLoaded = false;
         g_pool.swap(pool);
         g_files.swap(files);
         ok = true;
