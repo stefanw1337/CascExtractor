@@ -12,9 +12,9 @@ Files that fail are skipped and listed in _extract_failed.txt in the output fold
      re:...           regular expression        e.g.  re:_hd_\d+\.blp$
    Separate several with ;   Press Enter or "Check matching".
    "Check from list..." ticks every path / file ID listed in a .txt (one per line).
-   No install? Type online:wow:eu in "WoW install" to read straight from Blizzard's CDN (online:<product>:<region>,
-   e.g. online:wow_classic:eu). Downloaded data is cached in OnlineCache next to the exe. Put keys.txt (TACT keys)
-   next to the exe for encrypted files.
+   "Source" lists the WoW installs found on this PC and Blizzard's online CDNs (Retail, Classic, Classic Era,
+   beta, PTR). An online source needs no install; downloaded data is cached in OnlineCache next to the exe.
+   Put keys.txt (TACT keys) next to the exe for encrypted files.
 3. Press "Extract checked". Files already extracted are skipped, so re-running is cheap.
 
 If it is closed or crashes mid-job: start it, press Open, then "Resume last job".

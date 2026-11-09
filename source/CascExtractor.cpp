@@ -392,6 +392,7 @@ struct OnlineSource {
 // "online", "online:<product>" or "online:<product>:<region>" reads from Blizzard's CDN instead of an install.
 static bool ParseOnline(const std::string &install, OnlineSource &out) {
     std::string s = Lower(Trim(install));
+    s = s.substr(0, s.find(' '));
     if (s.compare(0, 6, "online") != 0 || (s.size() > 6 && s[6] != ':')) return false;
     std::vector<std::string> parts;
     size_t at = 7;
@@ -453,7 +454,7 @@ static void OpenWorker(std::string install, std::string listfile) {
                 Log("Could not open the storage (" + (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND
                                                          ? std::string("no .build.info found there")
                                                          : ErrText(e)) +
-                    "). Point 'WoW install' at the folder that contains .build.info, or type online:wow:eu.");
+                    "). Point 'Source' at the folder that contains .build.info, or pick an online source in the list.");
                 g_storage = nullptr;
                 break;
             }
@@ -893,6 +894,38 @@ static void StartExtract(bool resume) {
     std::thread(ExtractWorker, outDir, std::move(job)).detach();
 }
 
+// ---------------------------------------------------------------- sources
+static const char *ONLINE_SOURCES[] = {
+    "online:wow:eu            Retail - Blizzard CDN (EU)",
+    "online:wow:us            Retail - Blizzard CDN (US)",
+    "online:wow_classic:eu    Classic (current progression) - Blizzard CDN (EU)",
+    "online:wow_classic_era:eu    Classic Era - Blizzard CDN (EU)",
+    "online:wow_beta:us       Retail beta - Blizzard CDN (US)",
+    "online:wowt:us           Retail PTR - Blizzard CDN (US)",
+};
+
+static void FillSources(const std::string &saved) {
+    HWND box = GetDlgItem(g_wnd, ID_INSTALL);
+    std::vector<std::string> items;
+    auto add = [&](const std::string &item) {
+        for (auto &have : items)
+            if (Lower(have) == Lower(item)) return;
+        items.push_back(item);
+    };
+    for (const char *drive : {"C", "D", "E", "F", "G", "H", "L"})
+        for (const char *folder : {"\\World of Warcraft", "\\Program Files (x86)\\World of Warcraft",
+                                   "\\Program Files\\World of Warcraft", "\\Games\\World of Warcraft",
+                                   "\\World of Warcraft - Classic Forever"}) {
+            std::string path = std::string(drive) + ":" + folder;
+            if (FileExists(path + "\\.build.info")) add(path);
+        }
+    for (const char *online : ONLINE_SOURCES) add(online);
+    for (auto &item : items) SendMessageA(box, CB_ADDSTRING, 0, (LPARAM)item.c_str());
+    OnlineSource online;
+    bool usable = ParseOnline(saved, online) || FileExists(Trim(saved) + "\\.build.info");
+    SetText(ID_INSTALL, usable ? saved : items.front());
+}
+
 // ---------------------------------------------------------------- layout
 static HWND Ctl(const char *cls, const char *text, int id, DWORD style, DWORD ex = 0) {
     HWND h = CreateWindowExA(ex, cls, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 10, 10, g_wnd,
@@ -913,7 +946,7 @@ static void Layout() {
     for (auto &r : rows) {
         mv(r[0], m, y + S(4), lw, rh);
         int ew = W - m * 2 - lw - (bw + gap) * 2 - gap;
-        mv(r[1], m + lw, y, ew, rh);
+        mv(r[1], m + lw, y, ew, r[1] == ID_INSTALL ? rh + S(240) : rh);
         mv(r[2], m + lw + ew + gap, y, bw, rh);
         mv(r[3], m + lw + ew + gap * 2 + bw, y, bw, rh);
         y += rh + gap;
@@ -958,8 +991,8 @@ static void CreateUi() {
     SystemParametersInfoA(SPI_GETNONCLIENTMETRICS, sizeof ncm, &ncm, 0);
     g_font = CreateFontIndirectA(&ncm.lfMessageFont);
     const DWORD B = BS_PUSHBUTTON | WS_TABSTOP, E = ES_AUTOHSCROLL | WS_TABSTOP;
-    Ctl("STATIC", "WoW install:", ID_L1, 0);
-    Ctl("EDIT", "", ID_INSTALL, E, WS_EX_CLIENTEDGE);
+    Ctl("STATIC", "Source:", ID_L1, 0);
+    Ctl("COMBOBOX", "", ID_INSTALL, CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP);
     Ctl("BUTTON", "Browse...", ID_BR_INSTALL, B);
     Ctl("BUTTON", "Open", ID_OPEN, B);
     Ctl("STATIC", "Listfile:", ID_L2, 0);
@@ -980,7 +1013,7 @@ static void CreateUi() {
                  TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS | WS_TABSTOP | WS_VSCROLL,
                  WS_EX_CLIENTEDGE);
     TreeView_SetImageList(g_tree, MakeCheckImages(), TVSIL_STATE);
-    g_status = Ctl("STATIC", "Choose the WoW install folder (or type online:wow:eu) and press Open.", ID_STATUS, SS_LEFTNOWORDWRAP);
+    g_status = Ctl("STATIC", "Pick an install or an online source in the list and press Open.", ID_STATUS, SS_LEFTNOWORDWRAP);
     g_progress = Ctl(PROGRESS_CLASSA, "", ID_PROGRESS, 0);
     Ctl("BUTTON", "Extract checked", ID_EXTRACT, B);
     Ctl("BUTTON", "Resume last job", ID_RESUME, B);
@@ -988,7 +1021,7 @@ static void CreateUi() {
     g_log = Ctl("EDIT", "", ID_LOG, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, WS_EX_CLIENTEDGE);
     SendMessageA(g_log, EM_SETLIMITTEXT, 0, 0);
 
-    SetText(ID_INSTALL, IniGet("install", "F:\\World of Warcraft - Classic Forever"));
+    FillSources(IniGet("install", ""));
     SetText(ID_LIST, IniGet("listfile", (g_exeDir + "\\community-listfile.csv").c_str()));
     SetText(ID_OUT, IniGet("output", "E:\\TEMP\\WoW stuff\\HD PC models\\extracted"));
     SetText(ID_FILTER, IniGet("filter", ""));
