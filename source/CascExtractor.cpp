@@ -230,10 +230,10 @@ static void SetItemStateImg(HTREEITEM h, int img) {
     TreeView_SetItemState(g_tree, h, INDEXTOSTATEIMAGEMASK(img), TVIS_STATEIMAGEMASK);
 }
 
-static HTREEITEM InsertItem(HTREEITEM parent, LPARAM param, int img, bool children) {
+static HTREEITEM InsertItem(HTREEITEM parent, LPARAM param, int img, bool children, HTREEITEM after = TVI_LAST) {
     TVINSERTSTRUCTA ins = {};
     ins.hParent = parent;
-    ins.hInsertAfter = TVI_LAST;
+    ins.hInsertAfter = after;
     ins.item.mask = TVIF_TEXT | TVIF_PARAM | TVIF_STATE | TVIF_CHILDREN;
     ins.item.pszText = LPSTR_TEXTCALLBACKA;
     ins.item.lParam = param;
@@ -243,7 +243,7 @@ static HTREEITEM InsertItem(HTREEITEM parent, LPARAM param, int img, bool childr
     return (HTREEITEM)SendMessageA(g_tree, TVM_INSERTITEMA, 0, (LPARAM)&ins);
 }
 
-static const size_t kMaxShownFiles = 20000;
+static const size_t kMaxShownFiles = 5000;
 
 static void PopulateDir(int d) {
     DirRec &r = g_dirs[d];
@@ -251,10 +251,12 @@ static void PopulateDir(int d) {
     r.populated = true;
     HTREEITEM parent = d == 0 ? TVI_ROOT : r.item;
     SendMessageA(g_tree, WM_SETREDRAW, FALSE, 0);
-    for (int s : r.subdirs)
-        g_dirs[s].item = InsertItem(parent, DirParam(s), StateOfDir(s), true);
+    // TVI_LAST walks the whole sibling list on every insert; inserting backwards at TVI_FIRST keeps it linear.
     size_t shown = std::min(r.files.size(), kMaxShownFiles);
-    for (size_t i = 0; i < shown; ++i) InsertItem(parent, FileParam(r.files[i]), g_checked[r.files[i]] ? 2 : 1, false);
+    for (size_t i = shown; i-- > 0;)
+        InsertItem(parent, FileParam(r.files[i]), g_checked[r.files[i]] ? 2 : 1, false, TVI_FIRST);
+    for (size_t i = r.subdirs.size(); i-- > 0;)
+        g_dirs[r.subdirs[i]].item = InsertItem(parent, DirParam(r.subdirs[i]), StateOfDir(r.subdirs[i]), true, TVI_FIRST);
     SendMessageA(g_tree, WM_SETREDRAW, TRUE, 0);
     if (shown < r.files.size())
         Log("This folder holds " + Num(r.files.size()) + " files; the tree shows the first " + Num(shown) +
