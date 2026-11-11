@@ -20,4 +20,13 @@ Files that fail are skipped and listed in _extract_failed.txt in the output fold
 If it is closed or crashes mid-job: start it, press Open, then "Resume last job".
 A file that crashed the program is skipped automatically next time.
 
+Command line (for installers and scripts): no window opens; output goes to the console that started it.
+
+    CascExtractor.exe --extract --source "G:\Heroes of the Storm" --filter "storm_hero_chogall_base" --out out
+    CascExtractor.exe --extract --source online:wow:eu --filter "creature/chogall/" --out out
+
+`--source` is an install folder (the one with .build.info) or `online:<product>:<region>`. `--filter` works as in
+the window. `--listfile <csv>` names WoW files by ID; without it, community-listfile.csv next to the exe is used when
+present. Exit code 0 when every matched file was extracted, 2 when nothing matched, 1 on errors.
+
 Built with CascLib by Ladislav Zezula (MIT).

@@ -1,0 +1,47 @@
+name: build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-exe:
+    runs-on: ubuntu-latest
+    env:
+      CASCLIB_COMMIT: 6b889ec
+    steps:
+      - uses: actions/checkout@v4
+      - name: MinGW-w64
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64 cmake
+      - name: CascLib (static, with the CSV listfile patch)
+        run: |
+          git clone https://github.com/ladislav-zezula/CascLib casclib
+          git -C casclib checkout "$CASCLIB_COMMIT"
+          git -C casclib apply ../source/casclib-old-wow-csv-listfile.patch
+          cmake -S casclib -B casclib/build -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres -DCASC_BUILD_STATIC_LIB=ON \
+            -DCASC_BUILD_SHARED_LIB=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build casclib/build -j"$(nproc)"
+      - name: CascExtractor.exe
+        run: |
+          x86_64-w64-mingw32-windres source/app.rc -O coff -o app.res.o
+          x86_64-w64-mingw32-g++ -O2 -std=c++17 -Icasclib/src source/CascExtractor.cpp app.res.o \
+            casclib/build/libcasc.a -o CascExtractor.exe -mwindows -static -lcomctl32 -lcomdlg32 -lole32 \
+            -lshell32 -lwininet -luuid -lshlwapi -lws2_32
+          mkdir CascExtractor && cp CascExtractor.exe README.md CascExtractor/
+          zip -r CascExtractor.zip CascExtractor
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CascExtractor
+          path: CascExtractor.zip
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" CascExtractor.zip --title "CascExtractor $GITHUB_REF_NAME" --notes "Windows build of $GITHUB_SHA."

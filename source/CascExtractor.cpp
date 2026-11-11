@@ -89,7 +89,13 @@ static const char *PlainOf(uint32_t f) {
 static int S(int v) { return MulDiv(v, g_dpi, 96); }
 
 // ---------------------------------------------------------------- helpers
+static bool g_cli = false;
 static void PostStr(UINT msg, const std::string &s) {
+    if (g_cli) {
+        if (msg == WM_APP_LOG || s.find(" ... ") == std::string::npos) printf("%s\n", s.c_str());
+        fflush(stdout);
+        return;
+    }
     PostMessageA(g_wnd, msg, 0, (LPARAM) new std::string(s));
 }
 static void Status(const std::string &s) { PostStr(WM_APP_STATUS, s); }
@@ -1245,6 +1251,54 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcA(h, msg, wp, lp);
 }
 
+
+static std::string CliValue(int argc, char **argv, const char *name) {
+    for (int i = 1; i + 1 < argc; ++i)
+        if (strcmp(argv[i], name) == 0) return argv[i + 1];
+    return "";
+}
+
+static int RunCli(int argc, char **argv) {
+    std::string source = CliValue(argc, argv, "--source"), filter = CliValue(argc, argv, "--filter");
+    std::string out = CliValue(argc, argv, "--out"), listfile = CliValue(argc, argv, "--listfile");
+    if (source.empty() || filter.empty() || out.empty()) {
+        printf("Usage: CascExtractor --extract --source <install folder | online:<product>:<region>> --filter <filter>\n"
+               "                    --out <folder> [--listfile <community-listfile.csv>]\n"
+               "The filter works as in the window: plain text, * and ? wildcards, file IDs, re:regex; separate with ;.\n");
+        return 1;
+    }
+    if (listfile.empty() && FileExists(g_exeDir + "\\community-listfile.csv")) listfile = g_exeDir + "\\community-listfile.csv";
+    Matcher m;
+    std::string err;
+    if (!BuildMatcher(filter, m, err) || m.empty()) {
+        printf("%s\n", err.empty() ? "The filter is empty." : err.c_str());
+        return 1;
+    }
+    OpenWorker(source, listfile);
+    if (!g_storage || g_files.empty()) return 1;
+    MakeDirs(out);
+    uint32_t matched = 0, failed = 0;
+    for (uint32_t f = 0; f < g_files.size(); ++f) {
+        if (!Matches(m, f)) continue;
+        ++matched;
+        JobItem j{g_files[f].fdid, g_files[f].size, PathOf(f)};
+        std::string target = out + "\\" + j.path;
+        for (auto &c : target) if (c == '/') c = '\\';
+        MakeDirs(target.substr(0, target.rfind('\\')));
+        std::string why;
+        if (ExtractOne(j, target, why)) {
+            printf("extracted %s\n", j.path.c_str());
+        } else {
+            ++failed;
+            printf("FAILED %s: %s\n", j.path.c_str(), why.c_str());
+        }
+        fflush(stdout);
+    }
+    printf("%u files matched, %u failed.\n", matched, failed);
+    CascCloseStorage(g_storage);
+    return matched == 0 ? 2 : failed ? 1 : 0;
+}
+
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     INITCOMMONCONTROLSEX icc = {sizeof icc, ICC_TREEVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_STANDARD_CLASSES};
@@ -1255,6 +1309,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show) {
     g_exeDir = g_exeDir.substr(0, g_exeDir.rfind('\\'));
     g_iniPath = g_exeDir + "\\CascExtractor.ini";
     g_demo = strstr(GetCommandLineA(), "--demo") != nullptr;
+    if (__argc > 1 && strcmp(__argv[1], "--extract") == 0) {
+        g_cli = true;
+        if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+            freopen("CONOUT$", "w", stdout);
+            freopen("CONOUT$", "w", stderr);
+        }
+        int code = RunCli(__argc, __argv);
+        CoUninitialize();
+        return code;
+    }
     HDC dc = GetDC(nullptr);
     g_dpi = GetDeviceCaps(dc, LOGPIXELSY);
     ReleaseDC(nullptr, dc);
