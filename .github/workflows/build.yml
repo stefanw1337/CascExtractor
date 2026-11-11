@@ -5,6 +5,11 @@ on:
     branches: ['**']
     tags: ['casc-app*']
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Publish the build as a release with this tag (empty = build only)
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -41,7 +46,4 @@ jobs:
           name: CascExtractor
           path: CascExtractor.zip
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/casc-app')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" CascExtractor.zip --title "CascExtractor $GITHUB_REF_NAME" --notes "Windows build of $GITHUB_SHA."
+XX
