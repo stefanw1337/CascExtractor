@@ -46,4 +46,10 @@ jobs:
           name: CascExtractor
           path: CascExtractor.zip
       - name: Release
-XX
+        if: startsWith(github.ref, 'refs/tags/casc-app') || inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" CascExtractor.zip --target "$GITHUB_SHA" --title "CascExtractor $TAG" \
+            --notes "Windows build of $GITHUB_SHA. Adds the command-line mode (--extract); see README.md."
